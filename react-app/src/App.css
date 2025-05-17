@@ -265,85 +265,8 @@ button:disabled {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.demo-accounts {
-  padding: 1.5rem 2rem;
-  background-color: var(--primary-light);
-  border-top: 1px solid rgba(67, 97, 238, 0.1);
-}
-
-.demo-accounts h3 {
-  font-size: 1rem;
-  font-weight: 600;
-  margin-bottom: 1rem;
-  color: var(--text-color);
-}
-
-.account-card {
-  display: flex;
-  align-items: center;
-  padding: 1rem;
-  background-color: #fff;
-  border-radius: 8px;
-  margin-bottom: 1rem;
-  box-shadow: var(--shadow-sm);
-  transition: var(--transition);
-}
-
-.account-card:last-child {
-  margin-bottom: 0;
-}
-
-.account-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow);
-}
-
-.account-card.admin {
-  border-left: 4px solid var(--admin-color);
-}
-
-.account-card.lab-admin {
-  border-left: 4px solid var(--lab-admin-color);
-}
-
-.account-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 1rem;
-  margin-right: 1rem;
-  color: white;
-}
-
-.admin-icon {
-  background-color: var(--admin-color);
-}
-
-.lab-icon {
-  background-color: var(--lab-admin-color);
-}
-
-.account-details {
-  display: flex;
-  flex-direction: column;
-}
-
-.account-role {
-  font-weight: 600;
-  font-size: 0.9rem;
-  margin-bottom: 0.25rem;
-}
-
-.account-credentials {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* Modern Dashboard Styles */

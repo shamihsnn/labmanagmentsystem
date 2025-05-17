@@ -250,7 +250,11 @@ export const getPatientIdOnly = async (patientId) => {
   try {
     const storedPatient = getPatientFromStorage(patientId);
     if (storedPatient) {
-      return { id: storedPatient.id, exists: true };
+      return { 
+        id: storedPatient.id, 
+        exists: true,
+        referredTests: storedPatient.referredTests || ''
+      };
     }
   } catch (error) {
     console.error('Error getting patient from localStorage:', error);
@@ -258,7 +262,11 @@ export const getPatientIdOnly = async (patientId) => {
   
   // Fall back to in-memory array
   const patient = patients.find(p => p.id === patientId);
-  return { id: patientId, exists: !!patient };
+  return { 
+    id: patientId, 
+    exists: !!patient,
+    referredTests: patient?.referredTests || '' 
+  };
 };
 
 // Upload file - accessible by lab staff
