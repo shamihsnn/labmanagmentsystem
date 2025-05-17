@@ -115,13 +115,120 @@ const PatientReport = ({ report, user, onClose }) => {
     }
   }, [reportData?.patientInfo?.testResults]);
 
+  // Function to actively pre-load images from files
+  useEffect(() => {
+    if (reportData?.patientInfo?.testResults) {
+      console.log("Preloading images for reports...");
+      
+      // Go through all test results looking for files
+      reportData.patientInfo.testResults.forEach(test => {
+        if (test.files && Array.isArray(test.files)) {
+          // Process each file in this test
+          test.files.forEach((file, index) => {
+            // Try to identify any file that could potentially be an image
+            const isLikelyImage = 
+              (file && file.type && file.type.startsWith('image/')) || 
+              (file && file.name && file.name.toLowerCase().match(/\.(jpg|jpeg|png|gif|bmp|webp)$/));
+              
+            if (isLikelyImage) {
+              console.log(`Preloading image for ${file.name || `File-${index}`}`);
+              
+              // Try to load the image preview
+              loadImagePreview(file)
+                .then(dataUrl => {
+                  // Verify we got a valid data URL
+                  if (dataUrl && dataUrl.startsWith('data:')) {
+                    console.log(`Successfully loaded preview for ${file.name || `File-${index}`}`);
+                    // Store the data URL in the file object
+                    file.dataUrl = dataUrl;
+                    
+                    // Clear any previous error state for this file
+                    setImageErrors(prev => ({
+                      ...prev,
+                      [`${file.name}-${index}`]: false
+                    }));
+                    
+                    // Force a re-render
+                    setReportData(prev => ({ ...prev }));
+                  } else {
+                    console.warn(`Invalid data URL for ${file.name || `File-${index}`}`, dataUrl);
+                    throw new Error("Invalid data URL returned");
+                  }
+                })
+                .catch(err => {
+                  console.error(`Failed to load preview for ${file.name || `File-${index}`}:`, err);
+                  // Try alternative methods if available
+                  if (file.url && !file.url.startsWith('data:') && !file.url.startsWith('blob:')) {
+                    // For HTTP URLs, try loading through Image element
+                    const img = new Image();
+                    img.crossOrigin = "Anonymous";
+                    img.onload = () => {
+                      try {
+                        // Convert to data URL using canvas
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0);
+                        const dataUrl = canvas.toDataURL('image/jpeg');
+                        file.dataUrl = dataUrl;
+                        setReportData(prev => ({ ...prev }));
+                        console.log(`Recovered image for ${file.name || `File-${index}`} using Image element`);
+                      } catch (e) {
+                        console.error('Failed to convert image to data URL:', e);
+                      }
+                    };
+                    img.onerror = () => {
+                      setImageErrors(prev => ({
+                        ...prev,
+                        [`${file.name}-${index}`]: true
+                      }));
+                    };
+                    img.src = file.url;
+                  } else {
+                    // Mark as error
+                    setImageErrors(prev => ({
+                      ...prev,
+                      [`${file.name}-${index}`]: true
+                    }));
+                  }
+                });
+            }
+          });
+        }
+      });
+    }
+  }, [reportData?.patientInfo?.testResults]);
+
   // Function to get appropriate image URL (either the original or a fallback)
   const getImageUrl = (file, index) => {
+    if (!file) return null;
+    
     const fileId = `${file.name}-${index}`;
     
-    // Check if the file has a direct URL we can use
+    // First priority: if we've already converted to a data URL, use it
+    // This is the most reliable for PDF generation
+    if (file.dataUrl && file.dataUrl.startsWith('data:') && !imageErrors[fileId]) {
+      return file.dataUrl;
+    }
+    
+    // Second priority: if file has content property that's a data URL
+    if (file.content && file.content.startsWith('data:')) {
+      // Store for future use
+      if (!file.dataUrl) file.dataUrl = file.content;
+      return file.content;
+    }
+    
+    // Third priority: direct URL if it's already a data URL
+    if (file.url && file.url.startsWith('data:') && !imageErrors[fileId]) {
+      // Store for future use
+      if (!file.dataUrl) file.dataUrl = file.url;
+      return file.url;
+    }
+    
+    // Fourth priority: blob URL or HTTP/HTTPS URL
     if (file.url && !imageErrors[fileId]) {
-      // Check if URL is a blob URL or a direct URL
+      // URL can be blob: or http(s):
       if (file.url.startsWith('blob:') || file.url.startsWith('http')) {
         return file.url;
       }
@@ -132,18 +239,20 @@ const PatientReport = ({ report, user, onClose }) => {
       }
     }
     
-    // Check if we have data URL directly (common for in-memory images)
-    if (file.dataUrl && !imageErrors[fileId]) {
-      return file.dataUrl;
-    }
-    
-    // Handle base64 content directly in the file object
-    if (file.content && file.content.startsWith('data:')) {
-      return file.content;
+    // If we are checking a file that was already marked as having an error,
+    // try to use any available property as a last resort
+    if (imageErrors[fileId]) {
+      if (file.dataUrl) return file.dataUrl;
+      if (file.content && typeof file.content === 'string') return file.content;
+      if (file.url) return file.url;
     }
     
     // Return appropriate placeholder based on file type
-    if (file.type && file.type.startsWith('image/')) {
+    const isImageFile = 
+      (file.type && file.type.startsWith('image/')) ||
+      (file.name && file.name.toLowerCase().match(/\.(jpg|jpeg|png|gif|bmp|webp)$/));
+      
+    if (isImageFile) {
       // Return a nice image placeholder
       return 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MCIgaGVpZ2h0PSI4MCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IiMzMTgyY2UiIHN0cm9rZS13aWR0aD0iMSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cmVjdCB4PSIzIiB5PSIzIiB3aWR0aD0iMTgiIGhlaWdodD0iMTgiIHJ4PSIyIiByeT0iMiI+PC9yZWN0PjxjaXJjbGUgY3g9IjguNSIgY3k9IjguNSIgcj0iMS41Ij48L2NpcmNsZT48cG9seWxpbmUgcG9pbnRzPSIyMSAxNS44NSAxNiAxMC41IDggMTcuMDEiPjwvcG9seWxpbmU+PC9zdmc+';
     }
@@ -154,28 +263,123 @@ const PatientReport = ({ report, user, onClose }) => {
   // Function to force loading an image from a file object using FileReader
   const loadImagePreview = (file) => {
     return new Promise((resolve, reject) => {
-      if (!file || !file.type || !file.type.startsWith('image/')) {
+      if (!file) {
+        reject('No file provided');
+        return;
+      }
+      
+      // If not explicitly an image file but we still want to try loading it
+      const isLikelyImage = file.type && (
+        file.type.startsWith('image/') || 
+        (file.name && file.name.toLowerCase().match(/\.(jpg|jpeg|png|gif|bmp|webp)$/))
+      );
+      
+      if (!isLikelyImage && !file.type?.startsWith('image/')) {
         reject('Not an image file');
         return;
       }
       
-      // If we already have a URL or dataUrl, use it
-      if (file.url) resolve(file.url);
-      if (file.dataUrl) resolve(file.dataUrl);
+      // If we already have a dataUrl, use it
+      if (file.dataUrl && file.dataUrl.startsWith('data:')) {
+        console.log('Using existing dataUrl for file:', file.name || 'unnamed');
+        resolve(file.dataUrl);
+        return;
+      }
       
-      // If we have a File/Blob object, use FileReader
+      // If we have a direct URL that's already a data URL
+      if (file.url && file.url.startsWith('data:')) {
+        console.log('Using existing data URL from url property:', file.name || 'unnamed');
+        file.dataUrl = file.url; // Store for future use
+        resolve(file.url);
+        return;
+      }
+      
+      // If we have a blob URL, try to fetch and convert it
+      if (file.url && file.url.startsWith('blob:')) {
+        console.log('Converting blob URL to data URL:', file.name || 'unnamed');
+        fetch(file.url)
+          .then(response => response.blob())
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              file.dataUrl = e.target.result;
+              resolve(e.target.result);
+            };
+            reader.onerror = () => {
+              console.error('Failed to read blob from URL');
+              reject('Failed to convert blob URL');
+            };
+            reader.readAsDataURL(blob);
+          })
+          .catch(err => {
+            console.error('Failed to fetch from blob URL:', err);
+            reject('Failed to fetch from blob URL');
+          });
+        return;
+      }
+      
+      // If file is already a Blob/File object
       if (file instanceof Blob || file instanceof File) {
+        console.log('Converting Blob/File to data URL:', file.name || 'unnamed');
         const reader = new FileReader();
         reader.onload = (e) => {
           file.dataUrl = e.target.result;
           resolve(e.target.result);
         };
-        reader.onerror = () => reject('Failed to load image');
+        reader.onerror = (e) => {
+          console.error('FileReader error:', e);
+          reject('Failed to read image file');
+        };
         reader.readAsDataURL(file);
-      } else {
-        // No way to load the file
-        reject('Cannot load image');
+        return;
       }
+      
+      // If file has content property that's already a data URL
+      if (file.content && typeof file.content === 'string' && file.content.startsWith('data:')) {
+        console.log('Using content property as data URL:', file.name || 'unnamed');
+        file.dataUrl = file.content;
+        resolve(file.content);
+        return;
+      }
+      
+      // If we have an HTTP URL, try to fetch and convert it (may be blocked by CORS)
+      if (file.url && (file.url.startsWith('http://') || file.url.startsWith('https://'))) {
+        console.log('Attempting to fetch and convert HTTP URL (may fail due to CORS):', file.name || 'unnamed');
+        
+        // Create an image element to load the URL
+        const img = new Image();
+        img.crossOrigin = "Anonymous";  // Try to avoid CORS issues
+        
+        img.onload = () => {
+          try {
+            // Create canvas to convert to data URL
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            
+            const dataUrl = canvas.toDataURL('image/jpeg');
+            file.dataUrl = dataUrl;
+            resolve(dataUrl);
+          } catch (e) {
+            console.error('Error converting image to data URL:', e);
+            reject('Failed to convert image to data URL');
+          }
+        };
+        
+        img.onerror = () => {
+          console.error('Failed to load image from URL:', file.url);
+          reject('Failed to load image from URL');
+        };
+        
+        img.src = file.url;
+        return;
+      }
+      
+      // No suitable way to load the image
+      reject('No supported method to load this image');
     });
   };
   
@@ -460,6 +664,255 @@ const PatientReport = ({ report, user, onClose }) => {
         if (reportData?.patientInfo?.testResults) {
           console.log("Attempting to load file previews...");
           attemptLoadFilePreviews(reportData.patientInfo.testResults);
+        }
+      })
+      .catch(err => console.error("Error in report loading process:", err));
+  }, [report, user]);
+
+  // On mount or when report changes, check localStorage for backup data if needed
+  useEffect(() => {
+    const loadReportData = async () => {
+      // Log the initial report for debugging
+      if (process.env.NODE_ENV === 'development') {
+        console.log("Initial report prop:", report);
+      }
+
+      // Make a deep copy of the report to avoid modification issues
+      const reportCopy = report ? JSON.parse(JSON.stringify(report)) : null;
+
+      // First try to use the provided report
+      if (reportCopy && reportCopy.patientInfo && 
+          reportCopy.patientInfo.testResults && 
+          reportCopy.patientInfo.testResults.length > 0) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('Using provided report data directly from prop');
+        }
+        // Ensure all testResults have properly formatted data
+        reportCopy.patientInfo.testResults = reportCopy.patientInfo.testResults.map(test => {
+          return {
+            ...test,
+            testName: test.testName || "General Test",
+            testDate: test.testDate || new Date().toISOString(),
+            id: test.id || `TR-${Math.floor(Math.random() * 1000)}`,
+            addedByStaff: test.addedByStaff || user?.username || 'admin',
+            // Add placeholder results if none exist
+            results: test.results && Object.keys(test.results).length > 0 ? 
+              test.results : 
+              { "Parameter": "No specific parameters recorded" }
+          };
+        });
+        
+        // Pre-process any files to prepare for display and PDF generation
+        reportCopy.patientInfo.testResults.forEach(test => {
+          if (test.files && Array.isArray(test.files)) {
+            test.files.forEach((file, fileIndex) => {
+              // Ensure file has proper structure
+              if (!file) return;
+              
+              // Add a unique ID to each file for reference
+              file.fileId = file.fileId || `file-${test.id}-${fileIndex}`;
+              
+              // For image files, try to normalize paths and prepare for display
+              if (file.type?.startsWith('image/') || 
+                  (file.name && /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file.name))) {
+                console.log(`Processing image file: ${file.name || 'unnamed'}`);
+                
+                // If a file has multiple possible sources for image data, prioritize them
+                if (file.dataUrl) {
+                  console.log(`File ${file.name} already has dataUrl`);
+                } else if (file.content && file.content.startsWith('data:')) {
+                  file.dataUrl = file.content;
+                  console.log(`File ${file.name} has content that is a data URL`);
+                } else if (file.url && file.url.startsWith('data:')) {
+                  file.dataUrl = file.url;
+                  console.log(`File ${file.name} has URL that is a data URL`);
+                }
+                // Note: blob URLs and HTTP URLs will be handled by the loadImagePreview function
+              }
+            });
+          }
+        });
+        
+        setReportData(reportCopy);
+        return;
+      }
+      
+      // Rest of the function remains the same...
+      // If the report exists but seems incomplete, try to get the patient ID
+      const patientId = reportCopy?.patientInfo?.id || null;
+      
+      // Try localStorage first
+      try {
+        // Look for this specific patient report first
+        if (patientId) {
+          const specificPatientReportKeys = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.includes(`patient_report_${patientId}`)) {
+              specificPatientReportKeys.push(key);
+            }
+          }
+          
+          if (specificPatientReportKeys.length > 0) {
+            specificPatientReportKeys.sort((a, b) => {
+              const aTime = a.split('_').pop() || 0;
+              const bTime = b.split('_').pop() || 0;
+              return bTime - aTime;
+            });
+            
+            const latestReport = JSON.parse(localStorage.getItem(specificPatientReportKeys[0]));
+            if (latestReport && latestReport.patientInfo && 
+                latestReport.patientInfo.testResults && 
+                latestReport.patientInfo.testResults.length > 0) {
+              setReportData(latestReport);
+              return;
+            }
+          }
+        }
+        
+        // If no specific report found, look for any report
+        const allReports = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('patient_report_')) {
+            try {
+              const storedReport = JSON.parse(localStorage.getItem(key));
+              if (storedReport && storedReport.patientInfo && 
+                  storedReport.patientInfo.testResults && 
+                  storedReport.patientInfo.testResults.length > 0) {
+                allReports.push(storedReport);
+              }
+            } catch (e) {
+              console.error('Error parsing stored report from localStorage:', e);
+            }
+          }
+        }
+        
+        if (allReports.length > 0) {
+          allReports.sort((a, b) => new Date(b.generatedDate) - new Date(a.generatedDate));
+          setReportData(allReports[0]);
+          return;
+        }
+      } catch (error) {
+        console.error('Error retrieving report from localStorage:', error);
+      }
+      
+      // As a last resort, try to fetch patient data directly if we have a patient ID
+      if (patientId) {
+        try {
+          const manualReport = await fetchPatientData(patientId);
+          if (manualReport) {
+            setReportData(manualReport);
+            return;
+          }
+        } catch (e) {
+          console.error('Error during fetchPatientData:', e);
+        }
+      }
+      
+      // If we got here and still have a report, use it even if it's incomplete
+      if (reportCopy && reportCopy.patientInfo) {
+        // Create default test results if missing
+        if (!reportCopy.patientInfo.testResults || reportCopy.patientInfo.testResults.length === 0) {
+          reportCopy.patientInfo.testResults = [{
+            testName: "General Health Assessment",
+            testDate: new Date().toISOString(),
+            id: `TR-${Math.floor(Math.random() * 1000)}`,
+            addedByStaff: user?.username || 'admin',
+            timeStamp: new Date().toISOString(),
+            results: {
+              "General Health": "Assessment pending",
+              "Notes": "Full test results to be added"
+            },
+            comments: "Initial assessment"
+          }];
+        }
+        
+        reportCopy.testCount = reportCopy.patientInfo.testResults.length;
+        setReportData(reportCopy);
+        return;
+      }
+      
+      // If we still don't have valid data, create a fallback report
+      const fallbackReport = {
+        reportId: `RPT-FALLBACK-${Date.now()}`,
+        generatedDate: new Date().toISOString(),
+        patientInfo: {
+          id: patientId || 'PAT-UNKNOWN',
+          name: 'Patient data unavailable',
+          age: 'N/A',
+          gender: 'N/A',
+          bloodGroup: 'N/A',
+          contact: 'N/A',
+          testResults: [{
+            testName: "Test Results Unavailable",
+            testDate: new Date().toISOString(),
+            id: "TR-UNAVAILABLE",
+            addedByStaff: user?.username || 'admin',
+            timeStamp: new Date().toISOString(),
+            results: {
+              "Status": "Data retrieval issue",
+              "Action Required": "Please regenerate this report or contact IT support"
+            },
+            comments: "Data could not be loaded properly"
+          }]
+        },
+        summary: "Fallback Report - Data Retrieval Issue",
+        testCount: 1,
+        reportType: 'Fallback',
+        includesFiles: false,
+        generatedBy: 'LAB-east System (Fallback)'
+      };
+      
+      setReportData(fallbackReport);
+    };
+    
+    loadReportData()
+      .then(() => {
+        // After loading report data, attempt to load file previews
+        if (reportData?.patientInfo?.testResults) {
+          console.log("Attempting to preload file previews for PDF generation...");
+          
+          // Initialize image loading for all files
+          reportData.patientInfo.testResults.forEach(test => {
+            if (test.files && Array.isArray(test.files)) {
+              console.log(`Processing ${test.files.length} files for test ${test.id}`);
+              
+              test.files.forEach((file, fileIndex) => {
+                // Focus on images first
+                if (file && (file.type?.startsWith('image/') || 
+                    (file.name && /\.(jpg|jpeg|png|gif|webp|bmp)$/i.test(file.name)))) {
+                  
+                  console.log(`Preloading image: ${file.name || 'unnamed'}-${fileIndex}`);
+                  
+                  // Try to convert to data URL if not already done
+                  loadImagePreview(file)
+                    .then(dataUrl => {
+                      if (dataUrl && dataUrl.startsWith('data:')) {
+                        console.log(`Successfully loaded image for PDF: ${file.name || 'unnamed'}`);
+                        file.dataUrl = dataUrl;
+                        
+                        // Mark as successfully loaded
+                        setImageErrors(prev => ({
+                          ...prev,
+                          [`${file.name}-${fileIndex}`]: false
+                        }));
+                        
+                        // Force UI refresh
+                        setReportData(prev => ({...prev}));
+                      }
+                    })
+                    .catch(err => {
+                      console.error(`Failed to preload image for PDF: ${file.name || 'unnamed'}`, err);
+                      setImageErrors(prev => ({
+                        ...prev,
+                        [`${file.name}-${fileIndex}`]: true
+                      }));
+                    });
+                }
+              });
+            }
+          });
         }
       })
       .catch(err => console.error("Error in report loading process:", err));
@@ -986,7 +1439,7 @@ const PatientReport = ({ report, user, onClose }) => {
           if (test.files && test.files.length > 0) {
             try {
               // Check if we need a new page
-              checkPageBreak(40);
+              checkPageBreak(80); // Need more space for image previews
               
               yPosition += 4;
               doc.setFontSize(9);
@@ -997,14 +1450,14 @@ const PatientReport = ({ report, user, onClose }) => {
               setColor(colors.text);
               yPosition += 10;
               
-              // Create a clean table layout for files instead of individual boxes
-              const fileContainerHeight = Math.min(80 + (Math.ceil(test.files.length / 2) * 15), 180);
+              // Create container for image previews
+              const fileDisplayHeight = Math.min(120, 40 + (Math.ceil(test.files.length / 2) * 40));
               
               // Clear background for the container
               setFillColor([248, 250, 252]);
-              doc.rect(margin + 5, yPosition, contentWidth - 10, fileContainerHeight, 'F');
+              doc.rect(margin + 5, yPosition, contentWidth - 10, fileDisplayHeight, 'F');
               doc.setDrawColor(220, 220, 220);
-              doc.rect(margin + 5, yPosition, contentWidth - 10, fileContainerHeight, 'S');
+              doc.rect(margin + 5, yPosition, contentWidth - 10, fileDisplayHeight, 'S');
               
               // Add a title for the files section
               doc.setFontSize(10);
@@ -1012,89 +1465,120 @@ const PatientReport = ({ report, user, onClose }) => {
               setColor(colors.primary);
               doc.text(`Attached Files (${test.files.length})`, margin + 15, yPosition + 12);
               
-              // Draw table header
-              yPosition += 20;
+              // Calculate parameters for image grid
+              const maxFilesPerRow = 3;
+              const previewWidth = (contentWidth - 50) / maxFilesPerRow;
+              const previewHeight = 40;
               
-              // Table header background
-              setFillColor(colors.lightBg);
-              doc.rect(margin + 15, yPosition - 5, contentWidth - 30, 10, 'F');
+              const maxFilesToShow = Math.min(test.files.length, 6); // Limit to 6 files max
               
-              // Table header text
-              doc.setFontSize(8);
-              doc.setFont('helvetica', 'bold');
-              setColor(colors.text);
-              doc.text("File Type", margin + 25, yPosition);
-              doc.text("File Name", margin + 75, yPosition);
-              doc.text("Details", margin + 150, yPosition);
+              // Start positions for the grid
+              let startY = yPosition + 20;
               
-              // Draw header bottom border
-              doc.setDrawColor(200, 200, 200);
-              doc.setLineWidth(0.3);
-              doc.line(margin + 15, yPosition + 5, margin + contentWidth - 15, yPosition + 5);
-              
-              // File entries in table format - show up to 8 files
-              const maxFilesToShow = Math.min(test.files.length, 8);
-              yPosition += 10;
-              
+              // Show file previews in a grid layout
               for (let i = 0; i < maxFilesToShow; i++) {
                 const file = test.files[i];
-                const fileType = getFileIcon(file);
+                const row = Math.floor(i / maxFilesPerRow);
+                const col = i % maxFilesPerRow;
                 
-                // Set colors based on file type
-                let typeColor;
-                let typeLabel;
+                const fileX = margin + 15 + (col * previewWidth) + (col * 5);
+                const fileY = startY + (row * (previewHeight + 15));
                 
-                if (fileType === 'image') {
-                  typeColor = colors.accent;
-                  typeLabel = "IMAGE";
-                } else if (fileType === 'pdf') {
-                  typeColor = colors.red;
-                  typeLabel = "PDF";
-                } else if (fileType === 'doc') {
-                  typeColor = colors.secondary;
-                  typeLabel = "DOC";
-                } else {
-                  typeColor = colors.lightText;
-                  typeLabel = "FILE";
-                }
+                // Draw background for this file
+                setFillColor([255, 255, 255]);
+                doc.roundedRect(fileX, fileY, previewWidth, previewHeight, 2, 2, 'F');
+                doc.setDrawColor(230, 230, 230);
+                doc.roundedRect(fileX, fileY, previewWidth, previewHeight, 2, 2, 'S');
                 
-                // Draw file type
-                setColor(typeColor);
-                doc.setFontSize(8);
-                doc.setFont('helvetica', 'bold');
-                doc.text(typeLabel, margin + 25, yPosition);
-                
-                // Draw file name
+                // File name at the bottom
                 setColor(colors.text);
-                doc.setFont('helvetica', 'normal');
-                let fileName = file.name || `File ${i+1}`;
-                fileName = fileName.length > 30 ? fileName.substring(0, 27) + '...' : fileName;
-                doc.text(fileName, margin + 75, yPosition);
-                
-                // Draw file details (type or size if available)
-                setColor(colors.lightText);
                 doc.setFontSize(7);
-                doc.text(file.type ? file.type.split('/')[1].toUpperCase() : 'ATTACHMENT', margin + 150, yPosition);
+                let fileName = file.name || `File ${i+1}`;
+                fileName = fileName.length > 15 ? fileName.substring(0, 12) + '...' : fileName;
+                doc.text(fileName, fileX + previewWidth/2, fileY + previewHeight - 5, { align: 'center' });
                 
-                // Add subtle row divider
-                if (i < maxFilesToShow - 1) {
-                  doc.setDrawColor(240, 240, 240);
-                  doc.setLineWidth(0.1);
-                  doc.line(margin + 20, yPosition + 5, margin + contentWidth - 20, yPosition + 5);
+                // Add image if it's an image file
+                if (file.type && file.type.startsWith('image/')) {
+                  try {
+                    // Try to get image data
+                    const imageUrl = getImageUrl(file, i);
+                    
+                    if (imageUrl && imageUrl.startsWith('data:')) {
+                      // We have a data URL we can add directly to PDF
+                      try {
+                        // Calculate dimensions to maintain aspect ratio
+                        const imgWidth = previewWidth - 10;
+                        const imgHeight = previewHeight - 15;
+                        
+                        // Add the image
+                        doc.addImage(imageUrl, 'JPEG', fileX + 5, fileY + 3, imgWidth, imgHeight);
+                      } catch (imgErr) {
+                        console.error('Failed to add image to PDF:', imgErr);
+                        // Draw placeholder text instead
+                        setColor(colors.accent);
+                        doc.setFontSize(8);
+                        doc.text('IMAGE', fileX + previewWidth/2, fileY + previewHeight/2 - 5, { align: 'center' });
+                      }
+                    } else if (file.dataUrl) {
+                      // Try with the dataUrl property
+                      try {
+                        const imgWidth = previewWidth - 10;
+                        const imgHeight = previewHeight - 15;
+                        doc.addImage(file.dataUrl, 'JPEG', fileX + 5, fileY + 3, imgWidth, imgHeight);
+                      } catch (imgErr) {
+                        console.error('Failed to add image to PDF using dataUrl:', imgErr);
+                        setColor(colors.accent);
+                        doc.setFontSize(8);
+                        doc.text('IMAGE', fileX + previewWidth/2, fileY + previewHeight/2 - 5, { align: 'center' });
+                      }
+                    } else {
+                      // Can't add image, show placeholder
+                      setColor(colors.accent);
+                      doc.setFontSize(8);
+                      doc.text('IMAGE', fileX + previewWidth/2, fileY + previewHeight/2 - 5, { align: 'center' });
+                    }
+                  } catch (err) {
+                    console.error('Error processing image for PDF:', err);
+                    setColor(colors.accent);
+                    doc.setFontSize(8);
+                    doc.text('IMAGE', fileX + previewWidth/2, fileY + previewHeight/2 - 5, { align: 'center' });
+                  }
+                } else {
+                  // For non-image files, show appropriate icon
+                  const fileType = getFileIcon(file);
+                  
+                  let iconColor;
+                  let iconLabel;
+                  
+                  if (fileType === 'pdf') {
+                    iconColor = colors.red;
+                    iconLabel = "PDF";
+                  } else if (fileType === 'doc') {
+                    iconColor = colors.secondary;
+                    iconLabel = "DOC";
+                  } else {
+                    iconColor = colors.lightText;
+                    iconLabel = "FILE";
+                  }
+                  
+                  setColor(iconColor);
+                  doc.setFontSize(10);
+                  doc.text(iconLabel, fileX + previewWidth/2, fileY + previewHeight/2 - 5, { align: 'center' });
                 }
-                
-                yPosition += 15;
               }
               
-              // Additional files indicator if there are more files
+              // Additional files indicator
               if (test.files.length > maxFilesToShow) {
                 setColor(colors.secondary);
                 doc.setFontSize(8);
-                doc.text(`+ ${test.files.length - maxFilesToShow} more files`, currentX + 10, currentY + 15);
+                doc.text(`+ ${test.files.length - maxFilesToShow} more files not shown`, 
+                  margin + contentWidth/2, startY + Math.ceil(maxFilesToShow/maxFilesPerRow) * (previewHeight + 15) + 5, 
+                  { align: 'center' });
               }
               
-              yPosition += fileContainerHeight + 10;
-            } catch (fileError) {
+              yPosition = startY + Math.ceil(maxFilesToShow/maxFilesPerRow) * (previewHeight + 15) + 15;
+            }
+            catch (fileError) {
               console.error('Error rendering file attachments:', fileError);
               
               // Fallback: just show text mentioning files
